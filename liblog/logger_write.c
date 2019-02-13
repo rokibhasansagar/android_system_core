@@ -29,6 +29,10 @@
 #include <private/android_filesystem_config.h>
 #include <private/android_logger.h>
 
+#ifndef FAKE_LOG_DEVICE
+#include <sys/system_properties.h>
+#endif
+
 #include "config_read.h" /* __android_log_config_read_close() definition */
 #include "config_write.h"
 #include "log_portability.h"
@@ -405,7 +409,7 @@ LIBLOG_ABI_PUBLIC int __android_log_write(int prio, const char* tag,
 LIBLOG_ABI_PUBLIC int __android_log_buf_write(int bufID, int prio,
                                               const char* tag, const char* msg) {
   struct iovec vec[3];
-  char tmp_tag[32];
+  char tmp_tag[32] = "0";
 
   if (!tag) tag = "";
 
@@ -451,7 +455,14 @@ LIBLOG_ABI_PUBLIC int __android_log_buf_write(int bufID, int prio,
         break;
     }
   }
-
+#ifndef FAKE_LOG_DEVICE
+    /* check property for moving all RIL logs to main */
+    if (bufID == LOG_ID_RADIO) {
+	if ((__system_property_get("persist.ril.log",tmp_tag) > 0) &&
+		!strcmp(tmp_tag,"1"))
+	    bufID = LOG_ID_MAIN;
+    }
+#endif
 #if __BIONIC__
   if (prio == ANDROID_LOG_FATAL) {
     android_set_abort_message(msg);
@@ -700,4 +711,27 @@ LIBLOG_ABI_PUBLIC int android_get_log_transport() {
   __android_log_unlock();
 
   return ret;
+}
+
+#ifndef __unused
+#define __unused  __attribute__((__unused__))
+#endif
+struct xlog_record {
+    const char *tag_str;
+    const char *fmt_str;
+    int prio;
+};
+
+LIBLOG_ABI_PUBLIC void __attribute__((weak)) __xlog_buf_printf(int bufid __unused, const struct xlog_record *xlog_record __unused, ...) {
+#ifndef FAKE_LOG_DEVICE
+    char prop[32]="0";
+    /* check property for diable all xlog */
+    __system_property_get("ro.disable.xlog",prop);
+    if (!strcmp(prop, "0"))
+#endif
+    {
+	va_list args;
+	va_start(args, xlog_record);
+	__android_log_vprint(xlog_record->prio, xlog_record->tag_str, xlog_record->fmt_str, args);
+    }
 }
